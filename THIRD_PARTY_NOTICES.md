@@ -12,6 +12,8 @@ This package depends at runtime on [`dingtalk-stream`](https://github.com/open-d
 
 The experimental Matrix channel loads [`@matrix-org/olm`](https://www.npmjs.com/package/@matrix-org/olm) 3.2.15 as an external runtime dependency, including its WebAssembly binary. Its package manifest declares the Apache-2.0 License. The dependency is installed separately; no libolm source or WebAssembly binary is copied into the Host bundle.
 
+The Weixin voice capability can load [`silk-wasm`](https://github.com/idranme/silk-wasm) 3.7.1 as an optional external runtime dependency to encode WeChat-native SILK audio. Its package manifest declares the MIT License. The dependency is installed separately; no silk-wasm source or WebAssembly binary is copied into the Host bundle. When it is unavailable, voice uses ffmpeg-generated Ogg/Opus instead.
+
 QQ QR binding uses Tencent Connect's official [`@tencent-connect/qqbot-connector`](https://www.npmjs.com/package/@tencent-connect/qqbot-connector) 1.2.0 package as an external runtime dependency. Its npm metadata declares `UNLICENSED`; no connector source is copied into this project.
 
 The WhatsApp channel uses Baileys to implement WhatsApp Web linked-device QR login and messaging. This is an unofficial WhatsApp Web integration; users should use a dedicated bot number and understand that WhatsApp protocol changes can require connector updates.

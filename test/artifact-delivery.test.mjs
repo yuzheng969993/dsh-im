@@ -358,3 +358,46 @@ test('a definitively failed base delivery is not treated as user-visible', async
 
   assert.equal(delivery.userVisible, false);
 });
+
+test('audio artifacts prefer the native voice sender', async (t) => {
+  const artifact = await committedArtifact(t, 'reply.mp3', Buffer.from('mp3-audio'));
+  const calls = [];
+
+  const delivery = await deliverOutboundArtifacts({
+    artifacts: [artifact],
+    channelKey: 'test',
+    sendVoice: async (file) => {
+      calls.push(`voice:${file.mediaType}:${file.fileName}`);
+      return { messageId: 'voice-1' };
+    },
+    sendFile: async () => calls.push('file'),
+  });
+
+  assert.deepEqual(calls, ['voice:audio/mpeg:reply.mp3']);
+  assert.equal(delivery.receipt.presentation, 'test-voice');
+  assert.deepEqual(delivery.receipt.providerMessageIds, ['voice-1']);
+  await assertReleased(artifact);
+});
+
+test('a failed native-voice delivery falls back to the audio attachment', async (t) => {
+  const artifact = await committedArtifact(t, 'reply.ogg', Buffer.from('ogg-audio'));
+  const calls = [];
+
+  const delivery = await deliverOutboundArtifacts({
+    artifacts: [artifact],
+    channelKey: 'test',
+    sendVoice: async () => {
+      calls.push('voice');
+      throw rejected('artifact-provider-rejected');
+    },
+    sendFile: async () => {
+      calls.push('file');
+      return { messageId: 'file-after-voice' };
+    },
+  });
+
+  assert.deepEqual(calls, ['voice', 'file']);
+  assert.equal(delivery.receipt.presentation, 'test-file');
+  assert.equal(delivery.artifactsSent, 1);
+  await assertReleased(artifact);
+});

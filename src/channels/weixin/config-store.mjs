@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { normalizeWeixinApiBaseUrl } from './weixin-api.mjs';
+import { normalizeWeixinVoiceConfig } from './voice-config.mjs';
 import { t } from '../shared/i18n.mjs';
 import { configValidationError, withConfigResource } from '../shared/config-read-error.mjs';
 
@@ -63,6 +64,7 @@ function normalizeAccount(value, invalid = () => null) {
     tokenRef,
     ownerUserId,
     baseUrl,
+    voice: normalizeWeixinVoiceConfig(value.voice),
     createdAt: cleanString(value.createdAt) ?? new Date().toISOString(),
     connectedAt: cleanString(value.connectedAt),
   });

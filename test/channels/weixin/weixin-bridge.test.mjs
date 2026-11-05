@@ -2816,3 +2816,100 @@ test('Weixin keeps delivering a message whose send time cannot be read', async (
     `only the unreadable field is dropped: ${text}`);
   assert.ok(text.endsWith('时间读不到也要送达'));
 });
+
+test('Weixin replies to a voice message with a native voice bubble when enabled', async () => {
+  const fixture = stateFixture();
+  fixture.sessions.set('p2p:owner-user', 'session-voice-reply');
+  const sent = [];
+  const voices = [];
+  const synthesized = [];
+  const bridge = new WeixinHarnessBridge({
+    api: {
+      sendText: async (request) => {
+        sent.push(request.text);
+        return { messageId: 'voice-reply-text' };
+      },
+      sendVoice: async (request) => {
+        voices.push(request);
+        return { messageId: 'voice-reply-bubble' };
+      },
+    },
+    baseUrl: 'https://ilinkai.weixin.qq.com/',
+    token: 'host-token',
+    ownerUserId: 'owner-user',
+    voice: {
+      enabled: true,
+      config: { replyMode: 'voice-input' },
+      synthesize: async (text) => {
+        synthesized.push(text);
+        return {
+          bytes: Buffer.from('silk-bytes'),
+          fileName: 'voice.silk',
+          mediaType: 'audio/silk',
+          encodeType: 6,
+          sampleRate: 24_000,
+          playtimeMs: 1_500,
+        };
+      },
+    },
+    harness: {
+      sessionExists: async () => true,
+      ask: async () => '这是语音回答',
+    },
+    state: fixture.state,
+  });
+
+  const receipt = await bridge.accept(message('weixin-voice-in', '', {
+    item_list: [{ type: 3, voice_item: { text: '用语音回答我' } }],
+  }));
+
+  assert.deepEqual(synthesized, ['这是语音回答']);
+  assert.deepEqual(sent, ['这是语音回答']);
+  assert.equal(voices.length, 1);
+  assert.equal(voices[0].toUserId, 'owner-user');
+  assert.equal(voices[0].file.playtimeMs, 1_500);
+  assert.equal(receipt.presentation, 'weixin-text-and-voice');
+  assert.deepEqual([...receipt.providerMessageIds].sort(), ['voice-reply-bubble', 'voice-reply-text']);
+  assert.equal(bridge.status.voiceMessagesSent, 1);
+  assert.equal(bridge.status.voiceSendErrors, 0);
+
+  await bridge.accept(message('weixin-text-after-voice', '这次只发文字'));
+  assert.equal(voices.length, 1, 'a text message must not trigger voice in voice-input mode');
+});
+
+test('Weixin keeps the text answer when voice synthesis fails', async () => {
+  const fixture = stateFixture();
+  fixture.sessions.set('p2p:owner-user', 'session-voice-failure');
+  const sent = [];
+  const status = createWeixinBridgeStatus();
+  const bridge = new WeixinHarnessBridge({
+    api: {
+      sendText: async (request) => {
+        sent.push(request.text);
+        return { messageId: 'voice-failure-text' };
+      },
+      sendVoice: async () => assert.fail('synthesis failure must not reach the API'),
+    },
+    baseUrl: 'https://ilinkai.weixin.qq.com/',
+    token: 'host-token',
+    ownerUserId: 'owner-user',
+    status,
+    voice: {
+      enabled: true,
+      config: { replyMode: 'always' },
+      synthesize: async () => { throw new Error('TTS unavailable'); },
+    },
+    harness: {
+      sessionExists: async () => true,
+      ask: async () => '文字答案仍然送达',
+    },
+    state: fixture.state,
+  });
+
+  await bridge.accept(message('weixin-voice-failure-in', '你好'));
+
+  assert.deepEqual(sent, ['文字答案仍然送达']);
+  assert.equal(status.voiceSendErrors, 1);
+  assert.equal(status.lastVoiceError, 'TTS unavailable');
+  assert.equal(status.messagesReplied, 1);
+});

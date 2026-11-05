@@ -7,6 +7,7 @@ import {
   WeixinApiError,
 } from './weixin-api.mjs';
 import { deriveWeixinBotIdentity, maskWeixinAccountId } from './config-store.mjs';
+import { normalizeWeixinVoiceConfig } from './voice-config.mjs';
 import {
   connectionTestMessage,
   connectionTestTargetUnavailable,
@@ -303,6 +304,38 @@ export class WeixinController {
     });
   }
 
+  async updateVoice(botId, voice) {
+    if (this.#closed) throw new Error('dsh-weixin controller is closed');
+    if (voice !== null && (typeof voice !== 'object' || Array.isArray(voice))) {
+      throw new TypeError('Invalid Weixin voice configuration');
+    }
+    const normalized = normalizeWeixinVoiceConfig(voice);
+    return this.#withBotTransition(botId, async () => {
+      const config = this.#configStore.get(botId);
+      if (!config) throw weixinStageError('workspace-bot-not-found', undefined, 'voice.write');
+      let saved;
+      try {
+        saved = await this.#configStore.save({ ...config, voice: normalized });
+      } catch (error) {
+        throw weixinStageError('account-config-save-failed', error);
+      }
+      // 语音是可选能力:凭据暂时读不到时静默禁用,不阻断配置保存。
+      let secret = null;
+      if (normalized?.secretRef) {
+        try {
+          secret = cleanString((await this.#credentials.resolve(normalized.secretRef))?.value);
+        } catch (error) {
+          this.#diagnostics.report(error, {
+            operation: 'bot.voice.set', stage: 'credential.read', botId, warning: true,
+          });
+        }
+      }
+      this.#runtimes.get(botId)?.setVoice?.({ config: saved.voice, secret });
+      this.#touch();
+      return this.status();
+    });
+  }
+
   async deleteBot(botId) {
     const config = this.#configStore.get(botId);
     if (!config) throw weixinStageError('workspace-bot-not-found', undefined, 'account.remove');
@@ -379,6 +412,7 @@ export class WeixinController {
           name: t('微信机器人'),
           accountIdMasked: maskWeixinAccountId(config.accountId),
         },
+        voice: normalizeWeixinVoiceConfig(config.voice),
         health: {
           status: connected ? 'healthy' : state === 'error' ? 'error' : 'offline',
           summary: connected
@@ -535,6 +569,7 @@ export class WeixinController {
       tokenRef: identity.tokenRef,
       ownerUserId,
       baseUrl,
+      voice: previousConfig?.voice ?? null,
       createdAt: previousConfig?.createdAt ?? new Date().toISOString(),
       connectedAt: new Date().toISOString(),
     };

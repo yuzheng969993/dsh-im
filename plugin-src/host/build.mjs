@@ -19,6 +19,7 @@ const externalRuntimePackages = [
   'nodemailer',
   'qrcode',
   'sharp',
+  'silk-wasm',
   'undici',
 ];
 const external = externalRuntimePackages.flatMap((name) => [name, `${name}/*`]);

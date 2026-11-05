@@ -99,6 +99,13 @@ test('Weixin client keeps only the public connection-test result', () => {
       state: 'connected',
       configured: true,
       bot: { name: '微信机器人', accountIdMasked: 'account••••1234' },
+      voice: {
+        enabled: true,
+        secretRef: 'DASHSCOPE_API_KEY',
+        replyMode: 'always',
+        codec: 'ogg-opus',
+        maxChars: 180,
+      },
       lastMessageError: {
         code: 'attachment-error',
         reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES',
@@ -122,6 +129,9 @@ test('Weixin client keeps only the public connection-test result', () => {
     at: 123,
   });
   assert.doesNotMatch(JSON.stringify(snapshot), /must-not-cross-client-normalization/);
+  assert.equal(snapshot.bots[0].voice.replyMode, 'always');
+  assert.equal(snapshot.bots[0].voice.codec, 'ogg-opus');
+  assert.equal(snapshot.bots[0].voice.maxChars, 180);
 });
 
 test('Weixin account card shows the latest safe message-processing error', () => {

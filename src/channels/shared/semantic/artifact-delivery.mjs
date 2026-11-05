@@ -36,8 +36,23 @@ function providerIds(value) {
 async function sendMaterializedArtifact(file, {
   sendFile,
   sendImage,
+  sendVoice,
   signal,
 }) {
+  // A channel with a native voice bubble prefers it for audio artifacts; a
+  // failed upload/transcode falls back to the same audio as a file attachment.
+  if (file.mediaType?.startsWith('audio/') && typeof sendVoice === 'function') {
+    try {
+      return {
+        presentation: 'voice',
+        result: await sendVoice(file),
+      };
+    } catch (error) {
+      if (isAbort(error, signal) || error?.code === 'artifact-delivery-uncertain') {
+        throw error;
+      }
+    }
+  }
   if (file.mediaType?.startsWith('image/') && typeof sendImage === 'function') {
     try {
       return {
@@ -72,6 +87,7 @@ export async function deliverOutboundArtifacts({
   signal,
   sendFile,
   sendImage,
+  sendVoice,
   sendFailureNotice,
   onFailure,
   logger,
@@ -94,6 +110,7 @@ export async function deliverOutboundArtifacts({
         const sent = await sendMaterializedArtifact(file, {
           sendFile,
           sendImage,
+          sendVoice,
           signal,
         });
         signal?.throwIfAborted();

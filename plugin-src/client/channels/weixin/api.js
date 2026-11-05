@@ -7,6 +7,7 @@ import { normalizeModelCatalog, normalizeModelSelection, SET_MODEL_ENDPOINT } fr
 import { normalizeLastMessageError } from '../../last-message-error.js';
 import { normalizeAccessPolicy } from '../../../../src/channels/shared/access-policy.mjs';
 import { normalizeContextEnhancementConfig } from '../../../../src/channels/shared/context-enhancement.mjs';
+import { normalizeWeixinVoiceConfig } from '../../../../src/channels/weixin/voice-config.mjs';
 
 export const WEIXIN_RPC_CHANNEL = '/weixin';
 export const WEIXIN_ENDPOINTS = Object.freeze({
@@ -24,6 +25,7 @@ export const WEIXIN_ENDPOINTS = Object.freeze({
   setBusyMessageMode: 'bot.message-mode.set',
   setAccessPolicy: 'bot.access-policy.set',
   setAlias: 'bot.alias.set',
+  setVoice: 'bot.voice.set',
 });
 
 const ACCOUNT_STATES = new Set(['connected', 'connecting', 'offline', 'error']);
@@ -165,6 +167,7 @@ function normalizeBot(value) {
       name: string(value.bot.name, '微信机器人'),
       accountIdMasked: string(value.bot.accountIdMasked, '已安全保存'),
     },
+    voice: normalizeWeixinVoiceConfig(value.voice),
     health: {
       status: string(value.health?.status, connected ? 'healthy' : 'offline'),
       summary: string(value.health?.summary, connected ? '微信连接正常' : '微信连接未就绪'),

@@ -170,3 +170,44 @@ test('RPC sends a Weixin connection test only after reconnect reports the accoun
     botId, sendTest: false,
   })).ok, false);
 });
+
+test('RPC persists Weixin voice settings and rejects malformed payloads', async () => {
+  const botId = 'wx_0123456789abcdef01234567';
+  const calls = [];
+  const controller = controllerFixture();
+  controller.updateVoice = async (id, voice) => {
+    calls.push({ id, voice });
+    return snapshot({
+      state: 'connected',
+      bots: [{ botId, state: 'connected', connected: true, configured: true, bot: { name: '微信机器人' }, voice }],
+    });
+  };
+  const handler = createWeixinRpcHandler(controller);
+  const signal = new AbortController().signal;
+
+  const enabled = await handler(WEIXIN_ENDPOINTS.setVoice, {
+    botId,
+    voice: { enabled: true, secretRef: 'DASHSCOPE_API_KEY', replyMode: 'always', codec: 'silk' },
+  }, signal);
+  assert.equal(enabled.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].voice.replyMode, 'always');
+  assert.equal(calls[0].voice.codec, 'silk');
+
+  const disabled = await handler(WEIXIN_ENDPOINTS.setVoice, { botId, voice: null }, signal);
+  assert.equal(disabled.ok, true);
+  assert.equal(calls.at(-1).voice, null);
+
+  const invalid = await handler(WEIXIN_ENDPOINTS.setVoice, {
+    botId,
+    voice: { enabled: true, secretRef: 'not a variable' },
+  }, signal);
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error.code, 'bad-request');
+
+  const unexpected = await handler(WEIXIN_ENDPOINTS.setVoice, {
+    botId, voice: { enabled: true, secretRef: 'K' }, secret: 'must-not-cross',
+  }, signal);
+  assert.equal(unexpected.ok, false);
+  assert.doesNotMatch(JSON.stringify(unexpected), /must-not-cross/);
+});

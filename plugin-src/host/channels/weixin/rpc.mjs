@@ -4,6 +4,7 @@ import { registerManagementRpc } from '../../../management-rpc.mjs';
 import QRCode from 'qrcode';
 import { qrEncodingError } from '../../../../src/channels/shared/qr-encoding-error.mjs';
 import { createWeixinDiagnostics, weixinStageError } from '../../../../src/channels/weixin/connection-error.mjs';
+import { normalizeWeixinVoiceConfig } from '../../../../src/channels/weixin/voice-config.mjs';
 import { SET_CONTEXT_ENHANCEMENT_ENDPOINT, validContextEnhancementPayload } from '../shared/context-enhancement-rpc.mjs';
 import { SET_ACCESS_POLICY_ENDPOINT, validAccessPolicyPayload } from '../shared/access-policy-rpc.mjs';
 import { resolveRpcAuthority } from '../../rpc-authority.mjs';
@@ -37,6 +38,7 @@ export const WEIXIN_ENDPOINTS = Object.freeze({
   setBusyMessageMode: SET_MESSAGE_MODE_ENDPOINT,
   setAccessPolicy: SET_ACCESS_POLICY_ENDPOINT,
   setAlias: SET_ALIAS_ENDPOINT,
+  setVoice: 'bot.voice.set',
 });
 export const WEIXIN_RPC_ENDPOINTS = Object.freeze(Object.values(WEIXIN_ENDPOINTS));
 
@@ -113,6 +115,14 @@ function payloadFailure(endpoint, payload) {
   if (endpoint === WEIXIN_ENDPOINTS.setAlias) {
     return validAliasPayload(payload)
       ? null : '请输入有效的别名（最多 80 个字符）。';
+  }
+  if (endpoint === WEIXIN_ENDPOINTS.setVoice) {
+    const voice = payload?.voice;
+    const validVoice = voice === null
+      || (isRecord(voice)
+        && (voice.enabled === false || normalizeWeixinVoiceConfig(voice) !== null));
+    return exactKeys(payload, ['botId', 'voice']) && validId(payload.botId) && validVoice
+      ? null : '语音配置无效。';
   }
   return 'Unknown Weixin endpoint.';
 }
@@ -257,6 +267,12 @@ export function createWeixinRpcHandler(controller, { encodeQr = qrDataUrl, logge
         value = await controller.updateAlias(
           payload.botId, payload.alias, (status) => publicStatus(status, cachedEncode),
         );
+      } else if (endpoint === WEIXIN_ENDPOINTS.setVoice) {
+        if (typeof controller.updateVoice !== 'function') throw new Error('Voice update is unavailable');
+        value = await publicStatus(
+          await controller.updateVoice(payload.botId, payload.voice),
+          cachedEncode,
+        );
       } else if (endpoint === WEIXIN_ENDPOINTS.setAccessPolicy) {
         if (typeof controller.updateAccessPolicy !== 'function') throw new Error('Access policy update is unavailable');
         value = await controller.updateAccessPolicy(
@@ -280,6 +296,7 @@ export function createWeixinRpcHandler(controller, { encodeQr = qrDataUrl, logge
         'provision.poll': ['qr.poll'], 'provision.verify': ['qr.verify'], 'provision.cancel': ['qr.cancel'],
         'bot.reconnect': ['connection.start', 'connection-start-failed'],
         'bot.delete': ['account.remove'], 'bot.workspace.set': ['workspace.write', 'workspace-save-failed'],
+        'bot.voice.set': ['voice.write', 'voice-save-failed'],
       }[endpoint] ?? ['workspace.write', 'workspace-save-failed'];
       return { ok: false, error: diagnostics.report(error, {
         operation: endpoint, stage: context[0], code: context[1], botId: payload.botId,

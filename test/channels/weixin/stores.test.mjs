@@ -220,3 +220,36 @@ test('state store matches a recent bot reply from the timestamp encoded in msg_i
     toUserId: 'owner-user', messageId, now,
   }), '由真实微信消息 ID 恢复');
 });
+
+test('config store persists normalized voice settings without secrets', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-weixin-voice-config-'));
+  const path = join(root, 'config.json');
+  const store = await new WeixinConfigStore(path).load();
+  const identity = deriveWeixinBotIdentity('voice@im.bot');
+  await store.save({
+    ...identity,
+    accountId: 'voice@im.bot',
+    ownerUserId: 'owner-user',
+    baseUrl: 'https://ilinkai.weixin.qq.com',
+    voice: {
+      enabled: true,
+      secretRef: 'DASHSCOPE_API_KEY',
+      replyMode: 'always',
+      codec: 'ogg-opus',
+      maxChars: 300,
+      ttsVoice: 'Cherry',
+    },
+  });
+
+  const saved = (await new WeixinConfigStore(path).load()).list()[0];
+  assert.equal(saved.voice.replyMode, 'always');
+  assert.equal(saved.voice.codec, 'ogg-opus');
+  assert.equal(saved.voice.maxChars, 300);
+  assert.equal(saved.voice.ttsVoice, 'Cherry');
+  const raw = await readFile(path, 'utf8');
+  assert.doesNotMatch(raw, /sk-[A-Za-z0-9]{8,}/);
+  await assertRestrictiveMode(path, 0o600);
+
+  await store.save({ ...saved, voice: null });
+  assert.equal((await new WeixinConfigStore(path).load()).list()[0].voice, null);
+});

@@ -821,6 +821,37 @@ export function createWeixinApi({ fetchImpl = fetch, uploadFetchImpl = fetchImpl
       });
     },
 
+    /**
+     * Send a native WeChat voice bubble. The audio bytes must already be in a
+     * container the client understands (SILK or Ogg/Opus); callers use
+     * voice.mjs to produce them and pass its metadata straight through.
+     */
+    async sendVoice(request) {
+      const playtime = Number(request?.file?.playtimeMs);
+      if (!Number.isFinite(playtime) || playtime <= 0) {
+        throw new TypeError('voice file.playtimeMs must be a positive number');
+      }
+      const encodeType = Number.isSafeInteger(request.file.encodeType)
+        ? request.file.encodeType : 6;
+      const sampleRate = Number.isSafeInteger(request.file.sampleRate)
+        && request.file.sampleRate > 0 ? request.file.sampleRate : 24_000;
+      const bitsPerSample = Number.isSafeInteger(request.file.bitsPerSample)
+        && request.file.bitsPerSample > 0 ? request.file.bitsPerSample : 16;
+      return sendArtifact(request, {
+        mediaType: 4,
+        createItem: ({ media }) => ({
+          type: 3,
+          voice_item: {
+            media,
+            encode_type: encodeType,
+            bits_per_sample: bitsPerSample,
+            sample_rate: sampleRate,
+            playtime: Math.max(1, Math.round(playtime)),
+          },
+        }),
+      });
+    },
+
     async notifyStart({ baseUrl, token, signal }) {
       const response = await requestJson(fetchImpl, {
         method: 'POST',

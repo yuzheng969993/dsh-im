@@ -16,6 +16,7 @@ import {
   DELIVERY_RPC_CHANNEL,
   DeliveryTargetSettingsPage,
   FEISHU_BOT_SETTINGS_TABS,
+  WEIXIN_BOT_SETTINGS_TABS,
   botSettingsTabsForChannel,
 } from '../plugin-src/client/delivery-settings.js';
 import { en, setImTranslator } from '../plugin-src/client/i18n.js';
@@ -129,7 +130,14 @@ test('delivery settings define the supported IM and email channel routes', () =>
     { id: 'slash', label: '指令面板' },
     { id: 'voice', label: '语音交互' },
   ]);
-  assert.equal(botSettingsTabsForChannel('weixin'), BOT_SETTINGS_TABS);
+  assert.equal(botSettingsTabsForChannel('weixin'), WEIXIN_BOT_SETTINGS_TABS);
+  assert.deepEqual(WEIXIN_BOT_SETTINGS_TABS, [
+    { id: 'general', label: '通用' },
+    { id: 'delivery', label: '投递设置' },
+    { id: 'ds-bot', label: '绑定 DS Bot' },
+    { id: 'access', label: '访问设置' },
+    { id: 'voice', label: '语音交互' },
+  ]);
   assert.equal(botSettingsTabsForChannel('dingtalk'), BOT_SETTINGS_TABS);
   assert.equal(botSettingsTabsForChannel('feishu'), FEISHU_BOT_SETTINGS_TABS);
   assert.equal(DELIVERY_RPC_CHANNEL, '/dsh-im-delivery');
@@ -291,7 +299,7 @@ test('expanded card more settings opens a bot-scoped page and returns in place',
     0,
   );
   const settingsTabs = page.findAllByProps({ role: 'tab' });
-  assert.deepEqual(settingsTabs.map(textOf), ['通用', '投递设置', '绑定 DS Bot', '访问设置']);
+  assert.deepEqual(settingsTabs.map(textOf), ['通用', '投递设置', '绑定 DS Bot', '访问设置', '语音交互']);
   const settingsTab = settingsTabs[0];
   const settingsPanel = page.findByProps({ role: 'tabpanel' });
   assert.equal(textOf(settingsTab), '通用');

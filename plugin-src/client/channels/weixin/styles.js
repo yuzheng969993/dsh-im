@@ -97,6 +97,15 @@ const CSS = String.raw`
   .dxw-qrCopy { width: 100%; }
   .dxw-cardBody { padding: 20px; }
 }
+.dim-weixinVoiceTextarea {
+  min-height: 96px;
+  height: auto;
+  padding: 10px 11px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
 @media (prefers-reduced-motion: reduce) {
   .dxw-page *, .dxw-page *::before, .dxw-page *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }

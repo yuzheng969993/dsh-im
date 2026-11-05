@@ -51,6 +51,7 @@ function runtimeFactory({ failStart = false, startError, lastMessageError = null
   const runtimes = [];
   const connectionTests = [];
   const proactiveSends = [];
+  const voiceUpdates = [];
   const createRuntime = async ({ config, token }) => {
     let ready = false;
     const runtime = {
@@ -76,11 +77,12 @@ function runtimeFactory({ failStart = false, startError, lastMessageError = null
         proactiveSends.push({ botId: config.botId, target, text, options });
         return { sent: true };
       },
+      async setVoice(source) { voiceUpdates.push(source); },
     };
     runtimes.push(runtime);
     return runtime;
   };
-  return { runtimes, connectionTests, proactiveSends, createRuntime };
+  return { runtimes, connectionTests, proactiveSends, voiceUpdates, createRuntime };
 }
 
 test('confirmed QR login stores bot_token only in credentials and starts a redacted account', async () => {
@@ -468,4 +470,53 @@ test('cancelling an in-flight QR long poll is terminal and writes no credentials
   assert.equal(credentials.values.size, 0);
   assert.equal(configs.accounts.size, 0);
   await controller.close();
+});
+
+test('updateVoice persists normalized settings and hot-applies the resolved credential', async () => {
+  const credentials = credentialsFixture();
+  credentials.values.set('DASHSCOPE_API_KEY', 'tts-secret');
+  const configs = configFixture();
+  const runtimes = runtimeFactory();
+  const controller = new WeixinController({
+    api: {
+      beginLogin: async () => ({ qrcode: 'qr-voice', qrcodeUrl: 'https://liteapp.weixin.qq.com/q/voice' }),
+      pollLogin: async () => ({
+        status: 'confirmed',
+        bot_token: 'private-token',
+        ilink_bot_id: 'voice@im.bot',
+        ilink_user_id: 'owner-user',
+        baseurl: 'https://ilinkai.weixin.qq.com',
+      }),
+    },
+    credentials: credentials.provider,
+    configStore: configs.store,
+    createRuntime: runtimes.createRuntime,
+  });
+
+  const begun = await controller.startProvisioning();
+  const completed = await waitFor(
+    () => controller.registrationStatus(begun.attemptId),
+    (value) => value?.status === 'connected',
+  );
+  const botId = completed.botId;
+  const status = await controller.updateVoice(botId, {
+    enabled: true,
+    secretRef: 'DASHSCOPE_API_KEY',
+    replyMode: 'always',
+    codec: 'silk',
+    maxChars: 120,
+  });
+
+  assert.equal(status.bots[0].voice.replyMode, 'always');
+  assert.equal(status.bots[0].voice.codec, 'silk');
+  assert.equal(status.bots[0].voice.maxChars, 120);
+  assert.equal(configs.store.get(botId).voice.enabled, true);
+  assert.deepEqual(runtimes.voiceUpdates.at(-1), {
+    config: configs.store.get(botId).voice,
+    secret: 'tts-secret',
+  });
+
+  const disabled = await controller.updateVoice(botId, null);
+  assert.equal(disabled.bots[0].voice, null);
+  assert.deepEqual(runtimes.voiceUpdates.at(-1), { config: null, secret: null });
 });

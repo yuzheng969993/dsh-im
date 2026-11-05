@@ -13,6 +13,7 @@ import {
 } from '../../../../src/channels/weixin/weixin-api.mjs';
 import { WeixinController } from '../../../../src/channels/weixin/weixin-controller.mjs';
 import { WeixinRuntime } from '../../../../src/channels/weixin/weixin-runtime.mjs';
+import { normalizeWeixinVoiceConfig } from '../../../../src/channels/weixin/voice-config.mjs';
 import { createWeixinDiagnostics, knownWeixinErrorCode, weixinStageError } from '../../../../src/channels/weixin/connection-error.mjs';
 import {
   BotWorkspaceStore,
@@ -167,6 +168,16 @@ export async function createProductionController(ctx, config = {}, internals = {
         dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
       });
+      // 语音是可选渠道能力:凭据读取失败时静默禁用,不阻断机器人连接。
+      const voiceSettings = normalizeWeixinVoiceConfig(accountConfig.voice);
+      let voiceSecret = null;
+      if (voiceSettings?.secretRef) {
+        try {
+          voiceSecret = (await ctx.credentials.resolve(voiceSettings.secretRef))?.value ?? null;
+        } catch (error) {
+          logger.warn?.('[dsh-weixin-voice] 语音凭据读取失败,语音已禁用:', error?.message ?? String(error));
+        }
+      }
       return new Runtime({
         diagnostics,
         api,
@@ -174,6 +185,7 @@ export async function createProductionController(ctx, config = {}, internals = {
         token,
         harness: workspaceScope.harness,
         state: workspaceScope.state,
+        ...(voiceSettings ? { voice: { config: voiceSettings, secret: voiceSecret } } : {}),
         contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
         accessPolicy: accessPolicyProvider(workspaces, botId, {
           channel: 'weixin', config: accountConfig,

@@ -600,6 +600,80 @@ test('sendImage uses the encrypted CDN flow and sends a native image item', asyn
   }]);
 });
 
+test('sendVoice uploads with media_type=VOICE and sends a native voice_item', async () => {
+  const calls = [];
+  const api = createWeixinApi({
+    fetchImpl: async (url, init) => {
+      calls.push({ url: url.toString(), init });
+      if (url.pathname.endsWith('/getuploadurl')) {
+        return jsonResponse({
+          ret: 0,
+          upload_full_url: 'https://novac2c.cdn.weixin.qq.com/c2c/upload?ticket=voice-one',
+        });
+      }
+      if (url.pathname === '/c2c/upload') {
+        calls.at(-1).ciphertext = await uploadBytes(init.body);
+        return new Response(null, {
+          status: 200,
+          headers: { 'x-encrypted-param': 'download-voice-ticket' },
+        });
+      }
+      return jsonResponse({ ret: 0 });
+    },
+  });
+  const plaintext = Buffer.from('#!SILK_V3-voice-bytes');
+  const result = await api.sendVoice({
+    baseUrl: 'https://ilinkai.weixin.qq.com',
+    token: 'host-only-token',
+    toUserId: 'wx-user',
+    contextToken: 'voice-context',
+    runId: 'run-voice',
+    file: {
+      artifactId: 'artifact-voice',
+      deliveryKey: 'session:turn:artifact-voice',
+      fileName: 'voice.silk',
+      mediaType: 'audio/silk',
+      bytes: plaintext,
+      encodeType: 6,
+      bitsPerSample: 16,
+      sampleRate: 24_000,
+      playtimeMs: 2_380,
+    },
+  });
+
+  assert.equal(calls.length, 3);
+  const ticket = JSON.parse(calls[0].init.body);
+  assert.equal(ticket.media_type, 4);
+  assert.equal(ticket.to_user_id, 'wx-user');
+  assert.equal(ticket.rawsize, plaintext.length);
+  assert.equal(ticket.filesize, 32);
+  assert.equal(ticket.no_need_thumb, true);
+  assert.equal(
+    decryptWeixinImage(calls[1].ciphertext, Buffer.from(ticket.aeskey, 'hex')).equals(plaintext),
+    true,
+  );
+
+  const sent = JSON.parse(calls[2].init.body).msg;
+  assert.equal(sent.context_token, 'voice-context');
+  assert.equal(sent.run_id, 'run-voice');
+  assert.match(sent.client_id, /^dsh-weixin-[0-9a-f]{32}$/);
+  assert.equal(result.messageId, sent.client_id);
+  assert.deepEqual(sent.item_list, [{
+    type: 3,
+    voice_item: {
+      media: {
+        encrypt_query_param: 'download-voice-ticket',
+        aes_key: Buffer.from(ticket.aeskey).toString('base64'),
+        encrypt_type: 1,
+      },
+      encode_type: 6,
+      bits_per_sample: 16,
+      sample_rate: 24_000,
+      playtime: 2_380,
+    },
+  }]);
+});
+
 function weixinFileRequest(overrides = {}) {
   return {
     baseUrl: 'https://ilinkai.weixin.qq.com',

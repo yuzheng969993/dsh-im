@@ -1,5 +1,7 @@
 import { createWeixinDiagnostics } from './connection-error.mjs';
 import { DEFAULT_WEIXIN_MAX_MESSAGE_CHARS, WeixinApiError, rejectedProviderResponse, splitWeixinText } from './weixin-api.mjs';
+import { createVoiceTranscoder, createWeixinVoice } from './voice.mjs';
+import { normalizeWeixinVoiceConfig } from './voice-config.mjs';
 import { chunkMarkdownText } from '../shared/markdown-chunks.mjs';
 import {
   createWeixinBridgeStatus, WeixinHarnessBridge, weixinSendError, weixinSendFailureOptions,
@@ -121,6 +123,11 @@ export class WeixinRuntime {
   #accessPolicy;
   #logger;
   #diagnostics;
+  #createVoice;
+  #createVoiceTranscoder;
+  #voice;
+  #voiceTranscoder;
+  #voiceConfigured = false;
   #startContext = {};
   #replyTimeoutMs;
   #maxMessageChars;
@@ -144,9 +151,15 @@ export class WeixinRuntime {
     replyTimeoutMs = 600_000,
     maxMessageChars = DEFAULT_WEIXIN_MAX_MESSAGE_CHARS,
     startRetryDelaysMs,
+    voice = null,
+    createVoice = createWeixinVoice,
+    createTranscoder = createVoiceTranscoder,
   }) {
     if (!api || !config || !token || !harness || !state) {
       throw new TypeError('WeixinRuntime requires API, account, token, Harness, and state');
+    }
+    if (typeof createVoice !== 'function' || typeof createTranscoder !== 'function') {
+      throw new TypeError('WeixinRuntime voice factories must be functions');
     }
     this.#api = api;
     this.#config = config;
@@ -160,6 +173,39 @@ export class WeixinRuntime {
     this.#replyTimeoutMs = replyTimeoutMs;
     this.#maxMessageChars = maxMessageChars;
     this.#startRetryDelaysMs = startRetryDelays(startRetryDelaysMs);
+    this.#createVoice = createVoice;
+    this.#createVoiceTranscoder = createTranscoder;
+    this.#applyVoice(voice);
+  }
+
+  #applyVoice(source) {
+    const settings = normalizeWeixinVoiceConfig(source?.config ?? source);
+    this.#voiceConfigured = Boolean(settings);
+    this.#voiceTranscoder = this.#createVoiceTranscoder({
+      ffmpeg: settings?.ffmpeg ?? this.#config?.ffmpeg ?? 'ffmpeg',
+      codec: settings?.codec ?? 'auto',
+      logger: this.#logger,
+    });
+    const capability = settings
+      ? this.#createVoice({
+          settings,
+          secret: source?.secret ?? null,
+          logger: this.#logger,
+          transcoder: this.#voiceTranscoder,
+        })
+      : null;
+    this.#voice = capability?.enabled === true ? capability : null;
+    // Audio artifacts only become native voice bubbles when the bot has the
+    // optional voice capability enabled; an unconfigured bot keeps them as files.
+    this.#bridge?.setVoice?.(
+      this.#voice,
+      settings ? (options) => this.#voiceTranscoder.prepare(options) : null,
+    );
+  }
+
+  /** Hot-apply per-bot voice settings after the management UI saves them. */
+  setVoice(source) {
+    this.#applyVoice(source);
   }
 
   get status() {
@@ -206,6 +252,10 @@ export class WeixinRuntime {
         logger: this.#logger,
         replyTimeoutMs: this.#replyTimeoutMs,
         maxMessageChars: this.#maxMessageChars,
+        voice: this.#voice,
+        transcodeVoice: this.#voiceConfigured
+          ? (options) => this.#voiceTranscoder.prepare(options)
+          : null,
         signal,
       });
       this.#status.ready = true;

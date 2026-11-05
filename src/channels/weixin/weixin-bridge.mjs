@@ -62,6 +62,7 @@ import {
 } from '../shared/semantic/reply-reference.mjs';
 import {
   createDeliveryReceipt,
+  mergeDeliveryReceipts,
   providerMessageIdsFor,
 } from '../shared/semantic/delivery.mjs';
 import { recoverAssistantTextByTimestamp } from '../shared/session-reply-recovery.mjs';
@@ -245,6 +246,13 @@ function hasWeixinFileItems(message) {
     && message.item_list.some((item) => item?.file_item && typeof item.file_item === 'object');
 }
 
+function hasWeixinVoiceItems(message) {
+  return Array.isArray(message?.item_list)
+    && message.item_list.some((item) => (
+      item?.type === 3 || (item?.voice_item && typeof item.voice_item === 'object')
+    ));
+}
+
 function isNativeWeixinText(message) {
   return Array.isArray(message?.item_list)
     && message.item_list.length > 0
@@ -294,6 +302,10 @@ export function createWeixinBridgeStatus() {
     lastMessageAt: null,
     lastReplyAt: null,
     lastRejectedAt: null,
+    voiceMessagesSent: 0,
+    voiceSendErrors: 0,
+    lastVoiceAt: null,
+    lastVoiceError: null,
     lastError: null,
     lastMessageError: null,
   };
@@ -315,6 +327,8 @@ export class WeixinHarnessBridge {
   #maxMessageChars;
   #typingKeepaliveMs;
   #signal;
+  #voice;
+  #transcodeVoice;
   #queues = new Map();
   #busyMessages = new BusyMessageDispatcher();
   #pendingInteractions = new Map();
@@ -348,6 +362,8 @@ export class WeixinHarnessBridge {
     replyTimeoutMs = 600_000,
     maxMessageChars = DEFAULT_WEIXIN_MAX_MESSAGE_CHARS,
     typingKeepaliveMs = DEFAULT_TYPING_KEEPALIVE_MS,
+    voice = null,
+    transcodeVoice = null,
     signal,
   }) {
     if (!api || typeof api.sendText !== 'function') throw new TypeError('Weixin API is required');
@@ -355,6 +371,13 @@ export class WeixinHarnessBridge {
     if (!harness || !state) throw new TypeError('Harness client and state store are required');
     if (!Number.isFinite(typingKeepaliveMs) || typingKeepaliveMs <= 0) {
       throw new TypeError('typingKeepaliveMs must be a positive number');
+    }
+    if (voice !== null && (typeof voice !== 'object' || (voice.enabled === true
+      && typeof voice.synthesize !== 'function'))) {
+      throw new TypeError('Weixin voice capability requires synthesize');
+    }
+    if (transcodeVoice !== null && typeof transcodeVoice !== 'function') {
+      throw new TypeError('transcodeVoice must be a function');
     }
     this.#api = api;
     this.#baseUrl = baseUrl;
@@ -370,6 +393,8 @@ export class WeixinHarnessBridge {
     this.#maxMessageChars = maxMessageChars;
     this.#typingKeepaliveMs = typingKeepaliveMs;
     this.#signal = signal;
+    this.#voice = voice;
+    this.#transcodeVoice = transcodeVoice;
     this.#deferred = createDeferredDeliveryCoordinator({ harness, state, signal, logger,
       deliver: (entry, outcome) => this.#deliverDeferredOutcome(entry, outcome),
     });
@@ -378,6 +403,19 @@ export class WeixinHarnessBridge {
 
   get status() {
     return structuredClone(this.#status);
+  }
+
+  /** Hot-apply a per-bot voice capability without tearing down the connection. */
+  setVoice(voice, transcodeVoice = this.#transcodeVoice) {
+    if (voice !== null && (typeof voice !== 'object' || (voice.enabled === true
+      && typeof voice.synthesize !== 'function'))) {
+      throw new TypeError('Weixin voice capability requires synthesize');
+    }
+    if (transcodeVoice !== null && typeof transcodeVoice !== 'function') {
+      throw new TypeError('transcodeVoice must be a function');
+    }
+    this.#voice = voice;
+    this.#transcodeVoice = transcodeVoice;
   }
 
   accept(message) {
@@ -915,9 +953,9 @@ export class WeixinHarnessBridge {
         ? answer
         : artifacts.length > 0 ? t('结果文件已生成。') : answer;
       let textDeliveryError = null;
-      let textReceipt = null;
+      let baseReceipt = null;
       try {
-        textReceipt = createDeliveryReceipt({
+        baseReceipt = createDeliveryReceipt({
           deliveryId: messageId,
           presentation: 'weixin-text',
           providerMessageIds: await this.#send(sender, answerText, contextToken, runId),
@@ -925,13 +963,42 @@ export class WeixinHarnessBridge {
       } catch (error) {
         textDeliveryError = channelDeliveryFailure(error);
       }
+      const wantsVoice = this.#voice?.enabled === true
+        && typeof answerText === 'string' && answerText.trim()
+        && (this.#voice.config?.replyMode === 'always' || hasWeixinVoiceItems(message));
+      if (wantsVoice) {
+        try {
+          const voiceReceipt = await this.#sendVoiceAnswer(
+            sender, answerText, contextToken, runId, messageId,
+          );
+          if (voiceReceipt) {
+            baseReceipt = baseReceipt
+              ? mergeDeliveryReceipts({
+                  deliveryId: messageId,
+                  presentation: 'weixin-text-and-voice',
+                  receipts: [baseReceipt, voiceReceipt],
+                })
+              : voiceReceipt;
+          }
+        } catch (error) {
+          if (this.#signal?.aborted) throw error;
+          // The text answer is already delivered; voice is an optional
+          // presentation, so a failure is reported without failing the turn.
+          this.#status.voiceSendErrors += 1;
+          this.#status.lastVoiceError = error?.message ?? String(error);
+          this.#logger.warn?.(
+            `[dsh-weixin] voice reply failed (${error?.code ?? 'unknown'}):`,
+            error?.message ?? String(error),
+          );
+        }
+      }
       const delivery = await this.#deliverArtifacts(
         sender,
         messageId,
         artifacts,
         contextToken,
         runId,
-        textReceipt,
+        baseReceipt,
       );
       if (textDeliveryError && !delivery.userVisible) throw textDeliveryError;
       if (textDeliveryError && delivery.artifactSendErrors === 0) {
@@ -1516,6 +1583,30 @@ export class WeixinHarnessBridge {
     return this.#startTyping(toUserId, contextToken);
   }
 
+  async #sendVoiceAnswer(toUserId, text, contextToken, runId, deliveryId) {
+    if (this.#voice?.enabled !== true || typeof this.#voice.synthesize !== 'function') return null;
+    if (typeof this.#api.sendVoice !== 'function') return null;
+    const file = await this.#voice.synthesize(text, { signal: this.#signal });
+    if (!file?.bytes?.length) return null;
+    const result = await this.#api.sendVoice({
+      baseUrl: this.#baseUrl,
+      token: this.#token,
+      toUserId,
+      file,
+      contextToken,
+      runId,
+      signal: this.#signal,
+    });
+    this.#status.voiceMessagesSent += 1;
+    this.#status.lastVoiceAt = new Date().toISOString();
+    this.#status.lastVoiceError = null;
+    return createDeliveryReceipt({
+      deliveryId: `${deliveryId}:voice`,
+      presentation: 'weixin-voice',
+      providerMessageIds: providerMessageIdsFor(result),
+    });
+  }
+
   async #deliverArtifacts(toUserId, replyTo, artifacts, contextToken, runId, baseReceipt) {
     const sendArtifact = (method, file) => this.#api[method]({
       baseUrl: this.#baseUrl,
@@ -1526,6 +1617,18 @@ export class WeixinHarnessBridge {
       runId,
       signal: this.#signal,
     });
+    const voiceDelivery = typeof this.#api.sendVoice === 'function'
+      && typeof this.#transcodeVoice === 'function'
+      ? async (file) => {
+          const prepared = await this.#transcodeVoice({
+            bytes: file.bytes,
+            fileName: file.fileName,
+            mediaType: file.mediaType,
+            signal: this.#signal,
+          });
+          return sendArtifact('sendVoice', { ...file, ...prepared });
+        }
+      : undefined;
     const delivery = await deliverOutboundArtifacts({
       artifacts,
       baseReceipt,
@@ -1539,6 +1642,7 @@ export class WeixinHarnessBridge {
       sendFile: typeof this.#api.sendFile === 'function'
         ? (file) => sendArtifact('sendFile', file)
         : undefined,
+      ...(voiceDelivery ? { sendVoice: voiceDelivery } : {}),
       onFailure: (artifact, error) => setLastMessageFailure(this.#status, error, {
         userMessage: artifactFailureText(artifact?.fileName, error),
         reason: error?.code,

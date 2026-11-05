@@ -9,19 +9,30 @@ export const OUTBOUND_ARTIFACT_TOOL = 'dsh_im_return_file';
 const ARTIFACT_KIND = 'dsh-im-outbound-artifact';
 const ARTIFACT_READ_CHUNK_BYTES = 64 * 1024;
 const MIME_BY_EXTENSION = new Map([
+  ['.aac', 'audio/aac'],
+  ['.amr', 'audio/amr'],
   ['.csv', 'text/csv'],
   ['.doc', 'application/msword'],
   ['.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['.flac', 'audio/flac'],
   ['.gif', 'image/gif'],
   ['.html', 'text/html'],
   ['.jpeg', 'image/jpeg'],
   ['.jpg', 'image/jpeg'],
   ['.json', 'application/json'],
+  ['.m4a', 'audio/mp4'],
   ['.md', 'text/markdown'],
+  ['.mp3', 'audio/mpeg'],
+  ['.ogg', 'audio/ogg'],
+  ['.oga', 'audio/ogg'],
+  ['.opus', 'audio/opus'],
   ['.pdf', 'application/pdf'],
   ['.png', 'image/png'],
   ['.rar', 'application/vnd.rar'],
+  ['.silk', 'audio/silk'],
   ['.txt', 'text/plain'],
+  ['.wav', 'audio/wav'],
+  ['.webm', 'audio/webm'],
   ['.webp', 'image/webp'],
   ['.xls', 'application/vnd.ms-excel'],
   ['.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
@@ -653,7 +664,7 @@ export function createOutboundArtifactTool({ registry = outboundArtifactRegistry
   };
   const definition = Object.freeze({
     name: OUTBOUND_ARTIFACT_TOOL,
-    description: 'Register a readable file or generated image for delivery through the current IM conversation after this turn. Requires an active IM delivery consumer; in Web, Desktop, or CLI conversations use the host present tool if available. Existing and newly created files are both valid. Success means queued, not sent; do not claim the user has received the file.',
+    description: 'Register a readable file, generated image, or audio file for delivery through the current IM conversation after this turn. Channels with native voice support may present audio files as a voice message. Requires an active IM delivery consumer; in Web, Desktop, or CLI conversations use the host present tool if available. Existing and newly created files are both valid. Success means queued, not sent; do not claim the user has received the file.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -738,7 +749,7 @@ export function installOutboundArtifactTool(ctx, { registry = outboundArtifactRe
     name: 'dsh-im:return-file',
     order: 115,
     text: (assembly) => registry.hasActiveConsumer(assembly?.agent?.session)
-      ? `When the user asks to receive a file or generated image, call ${OUTBOUND_ARTIFACT_TOOL} with its path. Existing files can be sent directly; do not recreate or rename a file solely for delivery. This tool only registers the file; the channel uploads and sends it after your turn finishes. In your reply say the file is prepared or queued, never that it has already been sent or received. The channel reports delivery failures separately.`
+      ? `When the user asks to receive a file, generated image, or audio, call ${OUTBOUND_ARTIFACT_TOOL} with its path. Existing files can be sent directly; do not recreate or rename a file solely for delivery. Channels with native voice support may present an audio file as a voice message. This tool only registers the file; the channel uploads and sends it after your turn finishes. In your reply say the file is prepared or queued, never that it has already been sent or received. The channel reports delivery failures separately.`
       : '',
   });
   return true;

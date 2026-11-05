@@ -774,3 +774,96 @@ test('runtime retries a transient notifyStart failure before reporting the accou
   assert.equal(startCalls, 2);
   await runtime.stop();
 });
+
+test('runtime wires the voice capability into the bridge and hot-applies updates', async () => {
+  const sends = [];
+  const voiceSends = [];
+  const created = [];
+  const transcoders = [];
+  let polls = 0;
+  const api = {
+    notifyStart: async () => {},
+    notifyStop: async () => {},
+    sendText: async ({ text }) => { sends.push(text); return { messageId: `text-${sends.length}` }; },
+    sendVoice: async (request) => {
+      voiceSends.push(request);
+      return { messageId: 'voice-1' };
+    },
+    getUpdates: async ({ signal }) => {
+      polls += 1;
+      if (polls === 1) {
+        return {
+          ret: 0,
+          get_updates_buf: 'voice-cursor',
+          msgs: [{
+            message_id: 11,
+            message_type: 1,
+            from_user_id: 'owner',
+            context_token: 'voice-context',
+            item_list: [{ type: 3, voice_item: { text: '用语音回答' } }],
+          }],
+        };
+      }
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+    },
+  };
+  const runtime = new WeixinRuntime({
+    api,
+    config: { botId: 'wx_voice', baseUrl: 'https://ilinkai.weixin.qq.com/', ownerUserId: 'owner' },
+    token: 'bot-token',
+    harness: {
+      ensureRunning: async () => true,
+      sessionExists: async () => true,
+      createSession: async () => 'session-voice',
+      ask: async () => '语音答案',
+    },
+    state: {
+      getUpdatesBuf: () => '',
+      setGetUpdatesBuf: async () => {},
+      hasSeen: () => false,
+      markSeen: async () => {},
+      sessionFor: () => null,
+      setSession: async () => {},
+      clearSession: async () => {},
+    },
+    voice: {
+      config: { enabled: true, secretRef: 'DASHSCOPE_API_KEY', replyMode: 'voice-input' },
+      secret: 'tts-key',
+    },
+    createVoice: ({ settings, secret, transcoder }) => {
+      created.push({ settings, secret, transcoder });
+      return {
+        enabled: true,
+        config: settings,
+        synthesize: async () => ({
+          bytes: Buffer.from('voice-bytes'), fileName: 'voice.silk', mediaType: 'audio/silk',
+          encodeType: 6, sampleRate: 24_000, playtimeMs: 900,
+        }),
+      };
+    },
+    createTranscoder: (options) => {
+      transcoders.push(options);
+      return { prepare: async () => ({ bytes: Buffer.from('x') }) };
+    },
+    logger: { warn() {}, error() {} },
+  });
+
+  await runtime.start();
+  await flush();
+  await flush();
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].settings.replyMode, 'voice-input');
+  assert.equal(created[0].secret, 'tts-key');
+  assert.equal(transcoders[0].codec, 'auto');
+  assert.deepEqual(sends, ['语音答案']);
+  assert.equal(voiceSends.length, 1);
+  assert.equal(runtime.status.voiceMessagesSent, 1);
+
+  runtime.setVoice({ config: null, secret: null });
+  assert.equal(runtime.status.voiceMessagesSent, 1);
+
+  await runtime.stop();
+});
